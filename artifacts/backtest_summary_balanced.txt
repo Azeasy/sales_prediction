@@ -1,0 +1,11 @@
+Policy: balanced
+========================================
+  wape                          : 48.23%
+  bias                          : -0.006
+  service_level                 : 90.60%
+  waste_rate                    : 0.19%
+  total_stockout_events         : 1708
+  total_units_wasted            : +50.000
+  total_units_ordered           : +26189.000
+  total_units_fulfilled         : +26063.000
+  n_sku_days                    : 37752

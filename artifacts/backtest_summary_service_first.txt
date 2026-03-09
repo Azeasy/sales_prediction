@@ -1,0 +1,11 @@
+Policy: service_first
+========================================
+  wape                          : 48.23%
+  bias                          : -0.006
+  service_level                 : 97.82%
+  waste_rate                    : 1.05%
+  total_stockout_events         : 356
+  total_units_wasted            : +309.000
+  total_units_ordered           : +29340.000
+  total_units_fulfilled         : +28140.000
+  n_sku_days                    : 37752

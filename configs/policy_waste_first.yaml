@@ -1,0 +1,8 @@
+# Waste-first policy: minimize spoilage/write-offs at cost of higher OOS risk.
+# Applied on top of base.yaml.
+policy:
+  mode: waste_first
+  safety_stock_multiplier: 0.3   # minimal safety buffer
+  forecast_quantile: 0.30        # order conservatively (below median)
+  max_cover_days: 1              # never order more than one day's cover
+  round_up_shipment: false       # round down to avoid excess

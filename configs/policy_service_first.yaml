@@ -1,0 +1,8 @@
+# Service-first policy: minimize out-of-stock events at cost of higher waste.
+# Applied on top of base.yaml (only overrides policy section).
+policy:
+  mode: service_first
+  safety_stock_multiplier: 1.5   # generous safety buffer
+  forecast_quantile: 0.85        # order for high-demand scenarios
+  max_cover_days: null           # cover full shelf life
+  round_up_shipment: true        # always round up to full pack

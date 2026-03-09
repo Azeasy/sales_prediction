@@ -1,0 +1,78 @@
+data:
+  # "api" fetches from Forecasto APIs; "local" reads from samples_dir
+  source: api
+  raw_dir: data/raw
+  processed_dir: data/processed
+  samples_dir: data/samples
+  # Used as store_id in all records — APIs do not expose a store field
+  default_store_id: "default_store"
+  # When true, skip re-fetching if raw parquet already exists
+  skip_if_exists: true
+  # Only use data from the last N months (older data ignored in build-dataset)
+  lookback_months: 4
+
+api:
+  base_url: https://api.forecasto.ru
+  timeout: 30       # seconds per request
+  retries: 3        # number of retry attempts on transient failures
+  backoff_factor: 1 # seconds between retries (exponential)
+
+censoring:
+  # Strategy for handling censored (stockout-capped) demand during training.
+  #
+  # For perishable bakery data, end-of-day stock == 0 is *normal* (the bakery
+  # tries to sell everything).  This means the censoring detector flags ~99% of
+  # rows even though most are not true stockouts — imputation then produces no
+  # useful lift because there is no uncensored history to learn from.
+  #
+  # Default: none — use raw observed sales as the training target.
+  # Switch to "impute" only if you see clear evidence of mid-day stockouts
+  # (e.g., from intra-day sales data or explicit stockout reports).
+  #
+  # none  → use raw sales_qty as training target (safest for daily bakery data)
+  # drop  → exclude censored rows from training entirely
+  # impute → replace censored sales with rolling estimate (never below observed)
+  strategy: none
+  rolling_window: 7        # days for rolling median imputation baseline
+  use_dow_grouping: true   # also use same day-of-week signal for imputation
+
+features:
+  lags: [1, 2, 3, 7, 14]           # lag days (all >= 1, no leakage)
+  rolling_windows: [7, 14, 28]     # windows for rolling mean/std
+  target_col: demand_adjusted      # column to use as training target
+
+model:
+  type: lgbm   # lgbm | naive | seasonal_naive
+  params:
+    n_estimators: 500
+    learning_rate: 0.05
+    num_leaves: 31
+    min_child_samples: 20
+    subsample: 0.8
+    colsample_bytree: 0.8
+    random_state: 42
+    n_jobs: -1
+    verbose: -1
+
+artifacts:
+  dir: artifacts
+  model_file: lgbm_model.pkl
+  features_file: feature_list.json
+  feature_importance_file: feature_importance.csv
+
+# Product matching: merge duplicate SKUs (same product, different codes/names)
+# Run: python -m src.cli.main match-products
+# Then set product_matching.enabled: true to apply mapping in build-dataset
+product_matching:
+  enabled: true
+  fuzzy_threshold: 92    # token_set_ratio 0-100
+  embed_threshold: 0.92  # cosine similarity
+  use_embeddings: true   # false = fuzzy only (B)
+
+policy:
+  mode: balanced           # service_first | balanced | waste_first
+  safety_stock_multiplier: 1.0
+  forecast_quantile: 0.55  # scale forecast before computing order
+  # null = use product expiration_days; integer = hard cap in days
+  max_cover_days: null
+  round_up_shipment: true  # round order up to shipment multiple; false = round down
