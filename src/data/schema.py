@@ -23,6 +23,8 @@ COL_ARTICLE = "article"
 COL_SALES_QTY = "sales_qty"
 COL_SALES_AMOUNT = "sales_amount"
 COL_PRODUCT_GROUP = "product_group"
+COL_SUB_GROUP = "sub_group"            # product line/family within product_group
+COL_BASE_PRODUCT_NAME = "base_product_name"  # size-agnostic product identity
 COL_ITEM_TYPE = "item_type"
 COL_WEIGHT = "weight"
 

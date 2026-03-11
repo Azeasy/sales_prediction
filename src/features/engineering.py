@@ -36,7 +36,7 @@ from src.utils.logging import get_logger
 logger = get_logger(__name__)
 
 # Categorical columns that LightGBM handles natively
-CATEGORICAL_FEATURES = ["product_group", "day_of_week"]
+CATEGORICAL_FEATURES = ["product_group", "sub_group", "base_product_name", "day_of_week"]
 
 
 def build_features(df: pd.DataFrame, cfg: FeaturesConfig) -> pd.DataFrame:

@@ -30,10 +30,10 @@ from pathlib import Path
 import pandas as pd
 
 from src.data.schema import (
-    COL_ARTICLE, COL_DATE, COL_EXPIRATION_DAYS, COL_IS_CENSORED, COL_LOSS_AMOUNT,
-    COL_LOSS_QTY, COL_LOSS_REASON, COL_PRODUCT_GROUP, COL_SHIPMENT_MULTIPLE,
-    COL_SKU_CODE, COL_SKU_NAME, COL_STOCK_BALANCE, COL_STORE_ID, COL_UNIT_OF_MEASURE,
-    COL_SALES_AMOUNT, COL_SALES_QTY,
+    COL_ARTICLE, COL_BASE_PRODUCT_NAME, COL_DATE, COL_EXPIRATION_DAYS, COL_IS_CENSORED,
+    COL_LOSS_AMOUNT, COL_LOSS_QTY, COL_LOSS_REASON, COL_PRODUCT_GROUP, COL_SHIPMENT_MULTIPLE,
+    COL_SKU_CODE, COL_SKU_NAME, COL_STOCK_BALANCE, COL_STORE_ID, COL_SUB_GROUP,
+    COL_UNIT_OF_MEASURE, COL_SALES_AMOUNT, COL_SALES_QTY,
 )
 from src.utils.config import Config
 from src.utils.logging import get_logger
@@ -131,6 +131,28 @@ class DatasetBuilder:
             df[COL_SKU_NAME] = df[COL_SKU_NAME].fillna(df[f"{COL_SKU_NAME}_prod"])
             df.drop(columns=[f"{COL_SKU_NAME}_prod"], inplace=True)
 
+        # Resolve sub_group (fall back to product_group if missing)
+        if f"{COL_SUB_GROUP}_prod" in df.columns:
+            df[COL_SUB_GROUP] = df.get(COL_SUB_GROUP, pd.Series(dtype=str)).fillna(
+                df[f"{COL_SUB_GROUP}_prod"]
+            )
+            df.drop(columns=[f"{COL_SUB_GROUP}_prod"], inplace=True)
+        if COL_SUB_GROUP not in df.columns or df[COL_SUB_GROUP].isna().all():
+            df[COL_SUB_GROUP] = df[COL_PRODUCT_GROUP]
+        else:
+            df[COL_SUB_GROUP] = df[COL_SUB_GROUP].fillna(df[COL_PRODUCT_GROUP])
+
+        # Resolve base_product_name (fall back to sku_name if missing)
+        if f"{COL_BASE_PRODUCT_NAME}_prod" in df.columns:
+            df[COL_BASE_PRODUCT_NAME] = df.get(
+                COL_BASE_PRODUCT_NAME, pd.Series(dtype=str)
+            ).fillna(df[f"{COL_BASE_PRODUCT_NAME}_prod"])
+            df.drop(columns=[f"{COL_BASE_PRODUCT_NAME}_prod"], inplace=True)
+        if COL_BASE_PRODUCT_NAME not in df.columns or df[COL_BASE_PRODUCT_NAME].isna().all():
+            df[COL_BASE_PRODUCT_NAME] = df[COL_SKU_NAME]
+        else:
+            df[COL_BASE_PRODUCT_NAME] = df[COL_BASE_PRODUCT_NAME].fillna(df[COL_SKU_NAME])
+
         # Inject store_id (single-store: constant across all rows)
         df[COL_STORE_ID] = self._store_id
 
@@ -198,7 +220,10 @@ class DatasetBuilder:
             COL_SALES_AMOUNT: "sum",
         }
         # Carry forward string cols from first occurrence
-        str_cols = [c for c in [COL_SKU_NAME, COL_PRODUCT_GROUP] if c in df.columns]
+        str_cols = [
+            c for c in [COL_SKU_NAME, COL_PRODUCT_GROUP, COL_SUB_GROUP, COL_BASE_PRODUCT_NAME]
+            if c in df.columns
+        ]
         for c in str_cols:
             agg[c] = "first"
 
@@ -232,7 +257,11 @@ class DatasetBuilder:
     def _prepare_products(self, df: pd.DataFrame) -> pd.DataFrame:
         """Deduplicate product metadata; one row per sku_code."""
         df = df.copy()
-        self._strip_string_columns(df, [COL_SKU_CODE, COL_SKU_NAME, COL_PRODUCT_GROUP, COL_UNIT_OF_MEASURE])
+        self._strip_string_columns(
+            df,
+            [COL_SKU_CODE, COL_SKU_NAME, COL_PRODUCT_GROUP, COL_SUB_GROUP,
+             COL_BASE_PRODUCT_NAME, COL_UNIT_OF_MEASURE],
+        )
         return df.drop_duplicates(subset=[COL_SKU_CODE], keep="last")
 
     def _build_full_grid(self, sales: pd.DataFrame, stock: pd.DataFrame) -> pd.DataFrame:

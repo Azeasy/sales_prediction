@@ -15,7 +15,7 @@ run-demo:
 	python3 -m src.cli.main train
 	python3 -m src.cli.main predict
 	python3 -m src.cli.main recommend-order --policy balanced
-	python3 -m src.cli.main backtest --policy balanced
+	python3 -m src.cli.main backtest
 
 # Weaviate vector DB (required before running match-products)
 weaviate-up:

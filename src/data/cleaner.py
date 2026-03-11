@@ -20,6 +20,7 @@ Incremental runs:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import time
@@ -40,9 +41,10 @@ logger = get_logger(__name__)
 CATALOG_CACHE_FILE = "product_catalog.json"
 GROUPS_CACHE_FILE = "canonical_groups.json"
 GROUP_MAPPING_CACHE_FILE = "group_mapping.json"  # raw group name -> canonical group name
-BATCH_SIZE = 50                  # products per DeepSeek request
+BATCH_SIZE = 30                  # products per DeepSeek request
 MAX_RETRIES = 3
 RETRY_DELAY = 2.0                # seconds between retries
+MAX_CONCURRENT_REQUESTS = 5     # limit concurrent API calls to avoid rate limits
 
 
 # ---------------------------------------------------------------------------
@@ -214,6 +216,45 @@ def _make_client(api_key: str, base_url: str, model: str):
     ), model
 
 
+def _make_async_client(api_key: str, base_url: str, model: str):
+    """Return an async OpenAI-compatible client for the given base_url and model."""
+    from openai import AsyncOpenAI
+    return AsyncOpenAI(
+        api_key=api_key,
+        base_url=base_url.rstrip("/"),
+    ), model
+
+
+async def _call_llm_async(
+    client,
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+    semaphore: asyncio.Semaphore,
+) -> str:
+    """Async call to DeepSeek with retry logic. Returns the raw response text."""
+    async with semaphore:
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                response = await client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=0.0,
+                    response_format={"type": "json_object"},
+                )
+                return response.choices[0].message.content or ""
+            except Exception as exc:
+                logger.warning(
+                    "DeepSeek async attempt %d/%d failed: %s", attempt, MAX_RETRIES, exc
+                )
+                if attempt < MAX_RETRIES:
+                    await asyncio.sleep(RETRY_DELAY * attempt)
+        raise RuntimeError(f"DeepSeek API failed after {MAX_RETRIES} attempts")
+
+
 def _call_llm(
     client,
     model: str,
@@ -362,12 +403,11 @@ def clean_products_with_llm(
     Sends products in batches of BATCH_SIZE. Each batch includes the full
     canonical group list so the LLM stays consistent across batches.
 
-    Returns a list of dicts: {sku_code, sku_name, product_group, article}
+    Returns a list of dicts: {sku_code, sku_name, product_group, sub_group,
+                               base_product_name, article}
     """
     if products.empty:
         return []
-
-    client, model_name = _make_client(api_key, base_url, model)
 
     system_prompt = (
         "You are a data quality expert for a Russian bakery / grocery retail company. "
@@ -376,16 +416,17 @@ def clean_products_with_llm(
 
     groups_json = json.dumps(canonical_groups, ensure_ascii=False)
 
-    results: list[dict] = []
     rows = products.to_dict(orient="records")
     total_batches = (len(rows) + BATCH_SIZE - 1) // BATCH_SIZE
 
-    for batch_idx in range(0, len(rows), BATCH_SIZE):
+    async_client, model_name = _make_async_client(api_key, base_url, model)
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+
+    async def process_batch(batch_idx: int) -> list[dict]:
         batch = rows[batch_idx: batch_idx + BATCH_SIZE]
         batch_num = batch_idx // BATCH_SIZE + 1
         logger.info("Pass 2: batch %d/%d (%d products)...", batch_num, total_batches, len(batch))
 
-        # Simplify the batch: only send fields the LLM needs
         batch_input = [
             {
                 "sku_code": str(r.get(COL_SKU_CODE, "")),
@@ -410,22 +451,48 @@ def clean_products_with_llm(
             "   If none fits, propose a new group name and add it to the list.\n"
             "3. article: keep as-is unless it is clearly wrong (e.g. empty string is fine).\n"
             "4. sku_code: do NOT modify.\n"
+            "5. sub_group: assign a product line or family WITHIN the product_group. "
+            "   This should be more specific than product_group but broader than the individual product. "
+            "   Examples: within 'Торты' → 'Торты кремовые' / 'Торты бисквитные'; "
+            "   within 'Булочные изделия' → 'Батоны' / 'Чиабатта' / 'Плетенки'; "
+            "   within 'Хлеб из пшеничной муки' → 'Хлеб белый' / 'Хлеб подовый'. "
+            "   Be consistent — use the SAME sub_group string for similar products across the batch. "
+            "   For unique products with no obvious family, use the product_group value.\n"
+            "6. base_product_name: the product name WITHOUT size or weight "
+            "   (e.g. 'Торт Графские развалины' for both 0,500 кг and 0,900 кг variants; "
+            "   'Батоны Нарезные в/с' for 0,330 кг and 0,400 кг variants; "
+            "   'Хлеб Дарницкий формовой' regardless of weight). "
+            "   Strip weight, packaging notes (авто, нарезка, упак.), and trailing punctuation. "
+            "   If there is no size variant (unique product), use the full sku_name minus weight.\n"
             "Return a JSON object with key 'products': array of cleaned records "
-            "with the same fields: sku_code, sku_name, product_group, article."
+            "with fields: sku_code, sku_name, product_group, sub_group, base_product_name, article."
         )
 
-        raw_response = _call_llm(client, model_name, system_prompt, user_prompt)
+        raw_response = await _call_llm_async(
+            async_client, model_name, system_prompt, user_prompt, semaphore
+        )
         try:
             parsed = _extract_json(raw_response)
             batch_results = parsed.get("products", [])
             if not isinstance(batch_results, list):
                 raise ValueError("'products' is not a list")
-            results.extend(batch_results)
+            return batch_results
         except Exception as exc:
-            logger.error("Failed to parse Pass 2 batch %d response: %s\nRaw: %s", batch_num, exc, raw_response[:500])
-            # Fallback: return batch unchanged
-            results.extend(batch_input)
+            logger.error(
+                "Failed to parse Pass 2 batch %d response: %s\nRaw: %s",
+                batch_num, exc, raw_response[:500],
+            )
+            return batch_input
 
+    async def run_all_batches() -> list[dict]:
+        tasks = [
+            process_batch(batch_idx)
+            for batch_idx in range(0, len(rows), BATCH_SIZE)
+        ]
+        batch_results = await asyncio.gather(*tasks)
+        return [item for batch in batch_results for item in batch]
+
+    results = asyncio.run(run_all_batches())
     logger.info("Pass 2 complete: %d products cleaned", len(results))
     return results
 
@@ -461,9 +528,15 @@ def merge_catalogs(
         if not code:
             continue
         raw = raw_lookup.get(code, {})
+        clean_name = str(item.get("sku_name", code))
+        clean_group = str(item.get("product_group", ""))
         updated[code] = {
-            "sku_name": str(item.get("sku_name", code)),
-            "product_group": str(item.get("product_group", "")),
+            "sku_name": clean_name,
+            "product_group": clean_group,
+            # sub_group: LLM-assigned product line/family; fall back to product_group
+            "sub_group": str(item.get("sub_group", "") or clean_group),
+            # base_product_name: size-agnostic product identity; fall back to sku_name
+            "base_product_name": str(item.get("base_product_name", "") or clean_name),
             "article": str(item.get("article", "")),
             "raw_sku_name": raw.get("raw_sku_name", ""),
             "raw_product_group": raw.get("raw_product_group", ""),
@@ -501,8 +574,14 @@ def _apply_cleaning_fast(raw_df: pd.DataFrame, clean_catalog: dict[str, dict]) -
     """
     Vectorized version of apply_cleaning using map() for performance.
 
-    Applies: sku_code (strip), sku_name, product_group, article from catalog.
+    Applies: sku_code (strip), sku_name, product_group, sub_group,
+             base_product_name, article from catalog.
+
+    sub_group and base_product_name are always added as new columns (filled from
+    catalog, falling back to product_group / sku_name for codes not in catalog).
     """
+    from src.data.schema import COL_SUB_GROUP, COL_BASE_PRODUCT_NAME
+
     if raw_df.empty or not clean_catalog:
         return raw_df
 
@@ -526,6 +605,22 @@ def _apply_cleaning_fast(raw_df: pd.DataFrame, clean_catalog: dict[str, dict]) -
         mapped = code_series.map(article_map)
         raw_stripped = df[COL_ARTICLE].astype(str).str.strip().replace("nan", "")
         df[COL_ARTICLE] = mapped.where(mapped.notna(), raw_stripped).fillna("")
+
+    # sub_group: catalog value, falling back to product_group for unknowns
+    sub_group_map = {
+        c: (v.get("sub_group") or v.get("product_group", ""))
+        for c, v in clean_catalog.items()
+    }
+    fallback_sub = df.get(COL_PRODUCT_GROUP, pd.Series("", index=df.index)).astype(str)
+    df[COL_SUB_GROUP] = code_series.map(sub_group_map).fillna(fallback_sub)
+
+    # base_product_name: catalog value, falling back to sku_name for unknowns
+    base_name_map = {
+        c: (v.get("base_product_name") or v.get("sku_name", ""))
+        for c, v in clean_catalog.items()
+    }
+    fallback_base = df.get(COL_SKU_NAME, pd.Series("", index=df.index)).astype(str)
+    df[COL_BASE_PRODUCT_NAME] = code_series.map(base_name_map).fillna(fallback_base)
 
     return df
 
