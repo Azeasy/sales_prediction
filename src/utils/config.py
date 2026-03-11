@@ -25,6 +25,8 @@ class DataConfig:
     raw_dir: str = "data/raw"
     processed_dir: str = "data/processed"
     samples_dir: str = "data/samples"
+    cleaned_dir: str = "data/cleaned"
+    use_cleaned: bool = True           # True = read from cleaned_dir instead of raw_dir
     default_store_id: str = "default_store"
     skip_if_exists: bool = True
     lookback_months: Optional[int] = 4  # None = use all data; N = only last N months
@@ -67,11 +69,19 @@ class ArtifactsConfig:
 
 
 @dataclass
+class LlmConfig:
+    """LLM API settings for data cleaning (clean-data command)."""
+    base_url: str = "https://api.deepseek.com/v1"
+    model: str = "deepseek-chat"
+    api_key_env: str = "DEEPSEEK_API_KEY"  # env var name for API key
+
+
+@dataclass
 class ProductMatchingConfig:
     enabled: bool = False
-    fuzzy_threshold: float = 92.0
     embed_threshold: float = 0.92
-    use_embeddings: bool = True
+    use_weaviate: bool = False           # True = delegate to Weaviate (docker compose up -d)
+    weaviate_url: str = "http://localhost:8080"
 
 
 @dataclass
@@ -91,6 +101,7 @@ class Config:
     features: FeaturesConfig = field(default_factory=FeaturesConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     artifacts: ArtifactsConfig = field(default_factory=ArtifactsConfig)
+    llm: LlmConfig = field(default_factory=LlmConfig)
     product_matching: ProductMatchingConfig = field(default_factory=ProductMatchingConfig)
     policy: PolicyConfig = field(default_factory=PolicyConfig)
 
@@ -137,6 +148,7 @@ def _dict_to_config(d: dict) -> Config:
         features=_from_dict(FeaturesConfig, d.get("features", {})),
         model=_from_dict(ModelConfig, d.get("model", {})),
         artifacts=_from_dict(ArtifactsConfig, d.get("artifacts", {})),
+        llm=_from_dict(LlmConfig, d.get("llm", {})),
         product_matching=_from_dict(ProductMatchingConfig, d.get("product_matching", {})),
         policy=_from_dict(PolicyConfig, d.get("policy", {})),
     )

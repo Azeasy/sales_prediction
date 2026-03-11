@@ -1,4 +1,4 @@
-.PHONY: install test lint build-docker run-demo clean
+.PHONY: install test lint build-docker run-demo clean weaviate-up weaviate-down match-products
 
 install:
 	pip install -r requirements.txt
@@ -11,11 +11,25 @@ lint:
 
 # Full local demo using sample data
 run-demo:
-	python -m src.cli.main build-dataset
-	python -m src.cli.main train
-	python -m src.cli.main predict
-	python -m src.cli.main recommend-order --policy balanced
-	python -m src.cli.main backtest
+	python3 -m src.cli.main build-dataset
+	python3 -m src.cli.main train
+	python3 -m src.cli.main predict
+	python3 -m src.cli.main recommend-order --policy balanced
+	python3 -m src.cli.main backtest --policy balanced
+
+# Weaviate vector DB (required before running match-products)
+weaviate-up:
+	docker compose up -d
+	@echo "Waiting for Weaviate to be ready..."
+	@sleep 10
+	@echo "Weaviate ready at http://localhost:8080"
+
+weaviate-down:
+	docker compose down
+
+# Run product matching (requires Weaviate running: make weaviate-up)
+match-products:
+	python3 -m src.cli.main match-products
 
 build-docker:
 	docker build -t auto-order-mvp .

@@ -4,6 +4,10 @@ data:
   raw_dir: data/raw
   processed_dir: data/processed
   samples_dir: data/samples
+  cleaned_dir: data/cleaned
+  # When true, build-dataset reads from cleaned_dir instead of raw_dir
+  # Run `clean-data` first to populate cleaned_dir
+  use_cleaned: true
   # Used as store_id in all records — APIs do not expose a store field
   default_store_id: "default_store"
   # When true, skip re-fetching if raw parquet already exists
@@ -60,14 +64,20 @@ artifacts:
   features_file: feature_list.json
   feature_importance_file: feature_importance.csv
 
+# LLM for data cleaning (clean-data command). OpenAI-compatible APIs supported.
+llm:
+  base_url: https://api.deepseek.com/v1
+  model: deepseek-chat
+  api_key_env: DEEPSEEK_API_KEY  # env var name for API key
+
 # Product matching: merge duplicate SKUs (same product, different codes/names)
 # Run: python -m src.cli.main match-products
 # Then set product_matching.enabled: true to apply mapping in build-dataset
 product_matching:
   enabled: true
-  fuzzy_threshold: 92    # token_set_ratio 0-100
-  embed_threshold: 0.92  # cosine similarity
-  use_embeddings: true   # false = fuzzy only (B)
+  embed_threshold: 0.92          # min cosine similarity to consider a match
+  use_weaviate: false             # true = use Weaviate (requires docker compose up -d)
+  weaviate_url: "http://localhost:8080"  # Weaviate REST endpoint
 
 policy:
   mode: balanced           # service_first | balanced | waste_first

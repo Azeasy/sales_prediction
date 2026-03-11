@@ -35,11 +35,19 @@ class DataLoader:
     (see src/data/schema.py and src/api/schemas.py for column names).
     """
 
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, use_cleaned: bool | None = None):
+        """
+        Args:
+            config: Full config.
+            use_cleaned: Override config.data.use_cleaned. Use False when producing
+                cleaned data (e.g. clean-data command) so raw is always loaded.
+        """
         self._cfg = config
         self._source = config.data.source
         self._raw_dir = Path(config.data.raw_dir)
         self._samples_dir = Path(config.data.samples_dir)
+        self._cleaned_dir = Path(config.data.cleaned_dir)
+        self._use_cleaned = use_cleaned if use_cleaned is not None else config.data.use_cleaned
         self._skip_if_exists = config.data.skip_if_exists
         self._client = None  # created lazily on first live API call
 
@@ -78,6 +86,17 @@ class DataLoader:
         if self._source == "local":
             return self._read_local("sales.parquet")
 
+        # Cleaned data takes priority over raw when enabled
+        if self._use_cleaned:
+            cleaned_path = self._cleaned_dir / "sales.parquet"
+            if cleaned_path.exists():
+                logger.info("Loading cleaned sales from %s", cleaned_path)
+                df = pd.read_parquet(cleaned_path)
+                if "date" in df.columns:
+                    df["date"] = pd.to_datetime(df["date"])
+                return df
+            logger.warning("use_cleaned=true but %s not found; falling back to raw", cleaned_path)
+
         # API mode — specific date range requested
         if start_date is not None and end_date is not None:
             cache_path = self._raw_dir / f"sales_{start_date}_{end_date}.parquet"
@@ -103,6 +122,16 @@ class DataLoader:
         if self._source == "local":
             return self._read_local("stock.parquet")
 
+        if self._use_cleaned:
+            cleaned_path = self._cleaned_dir / "stock.parquet"
+            if cleaned_path.exists():
+                logger.info("Loading cleaned stock from %s", cleaned_path)
+                df = pd.read_parquet(cleaned_path)
+                if "date" in df.columns:
+                    df["date"] = pd.to_datetime(df["date"])
+                return df
+            logger.warning("use_cleaned=true but %s not found; falling back to raw", cleaned_path)
+
         if target_date is not None:
             cache_path = self._raw_dir / f"stock_{target_date}.parquet"
             if self._skip_if_exists and cache_path.exists():
@@ -118,6 +147,12 @@ class DataLoader:
         """Load product metadata (static; no date parameter)."""
         if self._source == "local":
             return self._read_local("products.parquet")
+        if self._use_cleaned:
+            cleaned_path = self._cleaned_dir / "products.parquet"
+            if cleaned_path.exists():
+                logger.info("Loading cleaned products from %s", cleaned_path)
+                return pd.read_parquet(cleaned_path)
+            logger.warning("use_cleaned=true but %s not found; falling back to raw", cleaned_path)
         cache_path = self._raw_dir / "products.parquet"
         if self._skip_if_exists and cache_path.exists():
             logger.info("Loading cached products from %s", cache_path)
@@ -136,6 +171,16 @@ class DataLoader:
         """
         if self._source == "local":
             return self._read_local("losses.parquet")
+
+        if self._use_cleaned:
+            cleaned_path = self._cleaned_dir / "losses.parquet"
+            if cleaned_path.exists():
+                logger.info("Loading cleaned losses from %s", cleaned_path)
+                df = pd.read_parquet(cleaned_path)
+                if "date" in df.columns:
+                    df["date"] = pd.to_datetime(df["date"])
+                return df
+            logger.warning("use_cleaned=true but %s not found; falling back to raw", cleaned_path)
 
         if target_date is not None:
             cache_path = self._raw_dir / f"losses_{target_date}.parquet"

@@ -30,8 +30,9 @@ class TestComputeOrder:
             forecast=10.0, stock_balance=8.0, expiration_days=1,
             safety_stock=2.0, shipment_multiple=1,
         )
-        # usable_stock = 0 (expires today), so order = 12
-        assert qty == 12
+        # usable_stock = 0 (expires today). Perishability cap = forecast * 1 = 10,
+        # so target_stock is capped at 10 (ordering 12 would create waste).
+        assert qty == 10
 
     def test_zero_order_when_sufficient_stock(self):
         """No order when current stock is already above target."""

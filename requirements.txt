@@ -28,8 +28,12 @@ python-dotenv>=1.0.0
 # Visualization (optional, for scripts/visualize_data.py)
 matplotlib>=3.7.0
 
-# Product matching (hybrid fuzzy + embeddings)
+# LLM data cleaning (DeepSeek API via OpenAI-compatible client)
+openai>=1.0
+
+# Product matching (in-memory embeddings, default)
 pymorphy2>=0.9
 pymorphy2-dicts-ru>=2.4
-rapidfuzz>=3.0
 sentence-transformers>=2.2
+# Weaviate vector DB (optional, used when product_matching.use_weaviate=true)
+weaviate-client>=4.4,<5.0
